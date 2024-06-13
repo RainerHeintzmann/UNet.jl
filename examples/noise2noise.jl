@@ -2,7 +2,7 @@
 
 using UNet, Flux, TestImages, View5D, Noise, NDTools, CUDA
 
-img = 10.0 .* Float32.(testimage("resolution_test_512"))
+img = 10f0 .* Float32.(testimage("resolution_test_512"))
 
 u = Unet(); 
 
@@ -11,7 +11,6 @@ function loss(u, x, y)
     # return mean(abs2.(u(x) .-y))
     return Flux.mse(u(x), y)
 end
-# opt = Momentum()
 opt_state = Flux.setup(Momentum(), u);
 
 # selects a tile at a random (default) or predifined (ctr) position returning tile and center.
@@ -20,8 +19,8 @@ function get_tile(img, tile_size=(128,128), ctr = (rand(tile_size[1]÷2:size(img
 end
 
 sz = size(img); 
-scale = 0.5/maximum(img)
-patch = (128,128)
+scale = 0.5f0/maximum(img)
+patch = (128, 128)
 for n in 1:1000
     println("Iteration: $n")
     myimg, pos = get_tile(img, patch)
