@@ -25,15 +25,15 @@ for n in 1:1000
     println("Iteration: $n")
     myimg, pos = get_tile(img, patch)
     # image to denoise
-    nimg1 = gpu(scale.*reshape(poisson(myimg), (size(myimg)...,1,1)))
+    nimg1 = gpu(scale.*reshape(Float32.(poisson(Float64.(myimg))), (size(myimg)...,1,1)))
     # goal image (with noise)
-    nimg2 = gpu(scale.*reshape(poisson(myimg), (size(myimg)...,1,1)))
+    nimg2 = gpu(scale.*reshape(Float32.(poisson(Float64.(myimg))), (size(myimg)...,1,1)))
     rep = [(nimg1, nimg2),] # Iterators.repeated((nimg1, nimg2), 1);
     # Flux.train!(loss, Flux.params(u), rep, opt_state)
     Flux.train!(loss, u, rep, opt_state)
 end
 
 # apply the net to the whole image instead:
-nimg = gpu(scale.*reshape(poisson(img),(size(img)...,1,1)));
+nimg = gpu(scale.*reshape(Float32.(poisson(Float64.(img))),(size(img)...,1,1)));
 # display the images using View5D
 @vt img nimg u(nimg)

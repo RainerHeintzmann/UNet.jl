@@ -7,8 +7,22 @@ end
 
 @functor ConvBlock
 
-function ConvBlock(in_channels, out_channels, kernel_sizes = [(3,3), (3,3)];
+function ConvBlock(in_out_pair::Pair; kwargs...)  
+  return ConvBlock([(3, 3), (3, 3)], in_out_pair; kwargs...)
+end
+
+"""
+  ConvBlock([kernel_sizes,] in_channels, out_channels; activation = NNlib.relu, padding = "valid")
+
+creates a convolution block with the UNet. The optional kernel sizes are given as a vector of tuples,
+where each tuple represents the kernel size of a convolution layer. Default is [(3, 3), (3, 3)].
+The in_channels and out_channels are the number of input and output channels of the block.
+The in_channels and out_channels have to be given as a Pair of integers (in_channels => out_channels).
+The activation function is applied after each convolution layer.
+"""
+function ConvBlock(kernel_sizes, in_out_pair::Pair;
                        activation = NNlib.relu, padding = "valid")
+  in_channels, out_channels = in_out_pair
   pad_arg = padding == "same" ? SamePad() : 0
   conv_layers = Any[]
   in_channels_it = in_channels
@@ -33,23 +47,18 @@ end
 struct Downsample{T1, T2, T3}
   op::T1
   factor::T2
-  pooling_type::T3
+  pooling_func::T3
 end
 
 function Base.show(io::IO, d::Downsample)
-  print(io, "Downsample($(d.factor), $(d.pooling_type))")
+  print(io, "Downsample($(d.factor), $(d.pooling_func))")
 end
 
 @functor Downsample
 
-function Downsample(downsample_factor; pooling_type="max")
-  if (pooling_type == "max")
-    downop = x -> NNlib.maxpool(x, downsample_factor, pad=0)
-  else
-    downop = x -> NNlib.meanpool(x, downsample_factor, pad=0)
-    pooling_type = "mean"
-  end
-  return Downsample(downop, downsample_factor, pooling_type)
+function Downsample(downsample_factor; pooling_func = NNlib.maxpool)
+    downop = x -> pooling_func(x, downsample_factor, pad=0)
+  return Downsample(downop, downsample_factor, pooling_func)
 end
 
 function (m::Downsample)(x)
@@ -68,8 +77,8 @@ end
 
 @functor Upsample
 
-function Upsample(scale_factor, in_channels, out_channels)
-  upop = ConvTranspose(scale_factor, in_channels=>out_channels, stride=scale_factor)
+function Upsample(scale_factor, in_out_pair::Pair)
+  upop = ConvTranspose(scale_factor, in_out_pair, stride=scale_factor)
   return Upsample(upop, scale_factor)
 end
 
@@ -110,8 +119,7 @@ end
 
 """
 function Unet(;
-  in_channels = 1,
-  out_channels = 1,
+  in_out_channels_pair = (1 => 1),
   num_fmaps = 64,
   fmap_inc_factor = 2,
   downsample_factors = [(2,2),(2,2),(2,2),(2,2)],
@@ -120,7 +128,7 @@ function Unet(;
   activation = NNlib.relu,
   final_activation = NNlib.relu;
   padding="same",
-  pooling_type="max"
+  pooling_func = NNlib.maxpool
   )
     creates a U-net model that can then be used to be trained and to perform predictions. A UNet consists of an initial layer to
     create feature maps, controlled via `num_fmaps`. This is followed by downsampling and umsampling steps,
@@ -129,9 +137,7 @@ function Unet(;
     and `kernel_sizes_up` respectively.
 
 # Paramers
-+ `in_channels`: channels of the input to the U-net
-
-+ `out_channels`: channels of the output of the U-net
++ `in_out_channels_pair`: channels of the input to the U-net and channels of the output of the U-net as a Pair of integers
 
 + `num_fmaps`: number of feature maps that the input gets expanded to in the first step
 
@@ -151,15 +157,14 @@ function Unet(;
 
 + `padding="valid"`: method of padding during convolution and upsampling
 
-+ `pooling_type="max"`: type of pooling
++ `pooling_func` = NNlib.maxpool
 
 # Example
 ```jldoctest
 ```
 """
 function Unet(;  # all arguments are named and ahve defaults
-  in_channels = 1,
-  out_channels = 1,
+  in_out_channels_pair = (1 => 1),
   num_fmaps = 64,
   fmap_inc_factor = 2,
   downsample_factors = [(2,2),(2,2),(2,2),(2,2)],
@@ -168,17 +173,19 @@ function Unet(;  # all arguments are named and ahve defaults
   activation = NNlib.relu,
   final_activation = NNlib.relu,
   padding ="same",
-  pooling_type ="max"
+  pooling_func = NNlib.maxpool
   )
+  in_channels, out_channels = in_out_channels_pair
   num_levels = length(downsample_factors) + 1
   dims = length(downsample_factors[1])
   l_convs = Any[]
   for level in 1:num_levels
     in_ch = (level == 1) ? in_channels : num_fmaps * fmap_inc_factor ^ (level - 2)
 
-    cb = ConvBlock(in_ch, 
-      num_fmaps * fmap_inc_factor ^ (level - 1),
+    cb = ConvBlock(
       kernel_sizes_down[level],
+      in_ch => 
+      num_fmaps * fmap_inc_factor ^ (level - 1),
       activation=activation,
       padding=padding
       )
@@ -190,7 +197,7 @@ function Unet(;  # all arguments are named and ahve defaults
     push!(l_downs,
       Downsample(
         downsample_factors[level];
-        pooling_type=pooling_type
+        pooling_func = pooling_func
       )
     )
   end
@@ -200,8 +207,7 @@ function Unet(;  # all arguments are named and ahve defaults
     push!(r_ups,
       Upsample(
         downsample_factors[level],
-        num_fmaps * fmap_inc_factor ^ level,
-        num_fmaps * fmap_inc_factor ^ level
+        num_fmaps * fmap_inc_factor ^ level => num_fmaps * fmap_inc_factor ^ level
       )
     )
   end
@@ -210,10 +216,9 @@ function Unet(;  # all arguments are named and ahve defaults
   for level in 1:num_levels - 1
     push!(r_convs,
       ConvBlock(
-        num_fmaps * fmap_inc_factor ^ (level - 1) +
-        num_fmaps * fmap_inc_factor ^ level,
-        num_fmaps * fmap_inc_factor ^ (level -  1),
         kernel_sizes_up[level],
+        num_fmaps * fmap_inc_factor ^ (level - 1) +
+        num_fmaps * fmap_inc_factor ^ level => num_fmaps * fmap_inc_factor ^ (level -  1),
         activation=activation,
         padding=padding
       )
@@ -221,9 +226,8 @@ function Unet(;  # all arguments are named and ahve defaults
   end
 
   final_conv = ConvBlock(
-    num_fmaps,
-    out_channels,
-    [Tuple(1 for i in 1:dims)],
+    [ntuple((i) -> 1, dims)],
+    num_fmaps => out_channels,
     activation=final_activation,
     padding=padding
   )
@@ -243,7 +247,7 @@ function (m::Unet)(x::AbstractArray; level=1)
         m.r_conv_chain[level](fs_right)
       end
     end
-  
+
   if (level == 1)
     return m.final_conv(fs_out)
   else
